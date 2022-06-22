@@ -885,14 +885,14 @@ void QuadPlane::multicopter_attitude_rate_update(float yaw_rate_cds)
         }
     } else {
         // use the fixed wing desired rates
-        float roll_rate = plane.rollController.get_pid_info().target;
-        float pitch_rate = plane.pitchController.get_pid_info().target;
-        if (tailsitter.enabled()) {
-            // tailsitter roll and yaw swapped due to change in reference frame
-            attitude_control->input_rate_bf_roll_pitch_yaw_2(yaw_rate_cds,pitch_rate*100.0f, -roll_rate*100.0f);
-        } else {
-            attitude_control->input_rate_bf_roll_pitch_yaw_2(roll_rate*100.0f, pitch_rate*100.0f, yaw_rate_cds);
-        }
+        Vector3f bf_input_cd { plane.rollController.get_pid_info().target * 100.0f,
+                               plane.pitchController.get_pid_info().target * 100.0f,
+                               yaw_rate_cds };
+
+        // rotate into multicopter attitude refence frame
+        ahrs_view->rotate(bf_input_cd);
+
+        attitude_control->input_rate_bf_roll_pitch_yaw_2(bf_input_cd.x, bf_input_cd.y, bf_input_cd.z);
     }
 }
 
@@ -2187,6 +2187,7 @@ void QuadPlane::poscontrol_init_approach(void)
     }
     poscontrol.pilot_correction_done = false;
     poscontrol.xy_correction.zero();
+    poscontrol.slow_descent = false;
 }
 
 /*
@@ -3473,13 +3474,13 @@ void QuadPlane::guided_start(void)
     setup_target_position();
     int32_t from_alt;
     int32_t to_alt;
+    poscontrol_init_approach();
     if (plane.current_loc.get_alt_cm(Location::AltFrame::ABSOLUTE,from_alt) && plane.next_WP_loc.get_alt_cm(Location::AltFrame::ABSOLUTE,to_alt)) {
         poscontrol.slow_descent = from_alt > to_alt;
     } else {
         // default back to old method
         poscontrol.slow_descent = (plane.current_loc.alt > plane.next_WP_loc.alt);
     }
-    poscontrol_init_approach();
 }
 
 /*
