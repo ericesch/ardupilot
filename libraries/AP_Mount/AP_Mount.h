@@ -123,17 +123,23 @@ public:
     void set_yaw_lock(bool yaw_lock) { set_yaw_lock(_primary, yaw_lock); }
     void set_yaw_lock(uint8_t instance, bool yaw_lock);
 
-    // set_angle_targets - sets angle targets in degrees
-    void set_angle_targets(float roll, float tilt, float pan) { set_angle_targets(_primary, roll, tilt, pan); }
-    void set_angle_targets(uint8_t instance, float roll, float tilt, float pan);
+    // set angle target in degrees
+    // yaw_is_earth_frame (aka yaw_lock) should be true if yaw angle is earth-frame, false if body-frame
+    void set_angle_target(float roll_deg, float pitch_deg, float yaw_deg, bool yaw_is_earth_frame) { set_angle_target(_primary, roll_deg, pitch_deg, yaw_deg, yaw_is_earth_frame); }
+    void set_angle_target(uint8_t instance, float roll_deg, float pitch_deg, float yaw_deg, bool yaw_is_earth_frame);
+
+    // sets rate target in deg/s
+    // yaw_lock should be true if the yaw rate is earth-frame, false if body-frame (e.g. rotates with body of vehicle)
+    void set_rate_target(float roll_degs, float pitch_degs, float yaw_degs, bool yaw_lock) { set_rate_target(_primary, roll_degs, pitch_degs, yaw_degs, yaw_lock); }
+    void set_rate_target(uint8_t instance, float roll_degs, float pitch_degs, float yaw_degs, bool yaw_lock);
 
     // set_roi_target - sets target location that mount should attempt to point towards
-    void set_roi_target(const struct Location &target_loc) { set_roi_target(_primary,target_loc); }
-    void set_roi_target(uint8_t instance, const struct Location &target_loc);
+    void set_roi_target(const Location &target_loc) { set_roi_target(_primary,target_loc); }
+    void set_roi_target(uint8_t instance, const Location &target_loc);
 
     // point at system ID sysid
-    void set_target_sysid(uint8_t instance, const uint8_t sysid);
-    void set_target_sysid(const uint8_t sysid) { set_target_sysid(_primary, sysid); }
+    void set_target_sysid(uint8_t sysid) { set_target_sysid(_primary, sysid); }
+    void set_target_sysid(uint8_t instance, uint8_t sysid);
 
     // mavlink message handling:
     MAV_RESULT handle_command_long(const mavlink_command_long_t &packet);
@@ -189,15 +195,6 @@ protected:
 
         AP_Float        _roll_stb_lead;     // roll lead control gain
         AP_Float        _pitch_stb_lead;    // pitch lead control gain
-
-        MAV_MOUNT_MODE  _mode;              // current mode (see MAV_MOUNT_MODE enum)
-        bool            _yaw_lock;          // If true the gimbal's yaw target is maintained in earth-frame, if false (aka "follow") it is maintained in body-frame
-        struct Location _roi_target;        // roi target location
-        bool _roi_target_set;
-
-        uint8_t _target_sysid;           // sysid to track
-        Location _target_sysid_location; // sysid target location
-        bool _target_sysid_location_set;
 
     } state[AP_MOUNT_MAX_INSTANCES];
 

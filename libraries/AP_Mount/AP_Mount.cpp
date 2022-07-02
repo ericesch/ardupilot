@@ -441,9 +441,6 @@ void AP_Mount::init()
 
     // create each instance
     for (uint8_t instance=0; instance<AP_MOUNT_MAX_INSTANCES; instance++) {
-        // default instance's state
-        state[instance]._mode = (enum MAV_MOUNT_MODE)state[instance]._default_mode.get();
-
         MountType mount_type = get_mount_type(instance);
 
         // check for servo mounts
@@ -502,6 +499,7 @@ void AP_Mount::init()
     for (uint8_t instance=0; instance<AP_MOUNT_MAX_INSTANCES; instance++) {
         if (_backends[instance] != nullptr) {
             _backends[instance]->init();
+            set_mode_to_default(instance);
         }
     }
 }
@@ -553,11 +551,12 @@ bool AP_Mount::has_pan_control(uint8_t instance) const
 MAV_MOUNT_MODE AP_Mount::get_mode(uint8_t instance) const
 {
     // sanity check instance
-    if (instance >= AP_MOUNT_MAX_INSTANCES) {
-        return  MAV_MOUNT_MODE_RETRACT;
+    if (!check_instance(instance)) {
+        return MAV_MOUNT_MODE_RETRACT;
     }
 
-    return state[instance]._mode;
+    // ask backend its mode
+    return _backends[instance]->get_mode();
 }
 
 // set_mode_to_default - restores the mode to it's default mode held in the MNT_MODE parameter
@@ -588,19 +587,32 @@ void AP_Mount::set_yaw_lock(uint8_t instance, bool yaw_lock)
         return;
     }
 
-    // return immediately if no change
-    state[instance]._yaw_lock = yaw_lock;
+    // call backend's set_yaw_lock
+    _backends[instance]->set_yaw_lock(yaw_lock);
 }
 
-// set_angle_targets - sets angle targets in degrees
-void AP_Mount::set_angle_targets(uint8_t instance, float roll, float tilt, float pan)
+// set angle target in degrees
+// yaw_is_earth_frame (aka yaw_lock) should be true if yaw angle is earth-frame, false if body-frame
+void AP_Mount::set_angle_target(uint8_t instance, float roll_deg, float pitch_deg, float yaw_deg, bool yaw_is_earth_frame)
 {
     if (!check_instance(instance)) {
         return;
     }
 
     // send command to backend
-    _backends[instance]->set_angle_targets(roll, tilt, pan);
+    _backends[instance]->set_angle_target(roll_deg, pitch_deg, yaw_deg, yaw_is_earth_frame);
+}
+
+// sets rate target in deg/s
+// yaw_lock should be true if the yaw rate is earth-frame, false if body-frame (e.g. rotates with body of vehicle)
+void AP_Mount::set_rate_target(uint8_t instance, float roll_degs, float pitch_degs, float yaw_degs, bool yaw_lock)
+{
+    if (!check_instance(instance)) {
+        return;
+    }
+
+    // send command to backend
+    _backends[instance]->set_rate_target(roll_degs, pitch_degs, yaw_degs, yaw_lock);
 }
 
 MAV_RESULT AP_Mount::handle_command_do_mount_configure(const mavlink_command_long_t &packet)
@@ -609,9 +621,9 @@ MAV_RESULT AP_Mount::handle_command_do_mount_configure(const mavlink_command_lon
         return MAV_RESULT_FAILED;
     }
     _backends[_primary]->set_mode((MAV_MOUNT_MODE)packet.param1);
-    state[0]._stab_roll = packet.param2;
-    state[0]._stab_tilt = packet.param3;
-    state[0]._stab_pan = packet.param4;
+    state[_primary]._stab_roll = packet.param2;
+    state[_primary]._stab_tilt = packet.param3;
+    state[_primary]._stab_pan = packet.param4;
 
     return MAV_RESULT_ACCEPTED;
 }
@@ -636,7 +648,7 @@ MAV_RESULT AP_Mount::handle_command_do_gimbal_manager_pitchyaw(const mavlink_com
     }
 
     // check flags for change to RETRACT
-    uint8_t flags = (uint8_t)packet.param5;
+    uint32_t flags = (uint32_t)packet.param5;
     if ((flags & GIMBAL_MANAGER_FLAGS_RETRACT) > 0) {
         _backends[_primary]->set_mode(MAV_MOUNT_MODE_RETRACT);
         return MAV_RESULT_ACCEPTED;
@@ -647,8 +659,6 @@ MAV_RESULT AP_Mount::handle_command_do_gimbal_manager_pitchyaw(const mavlink_com
         return MAV_RESULT_ACCEPTED;
     }
 
-    // To-Do: handle earth-frame vs body-frame angles
-    // To-Do: handle pitch and yaw rates
     // To-Do: handle gimbal device id
 
     // param1 : pitch_angle (in degrees)
@@ -656,7 +666,16 @@ MAV_RESULT AP_Mount::handle_command_do_gimbal_manager_pitchyaw(const mavlink_com
     const float pitch_angle_deg = packet.param1;
     const float yaw_angle_deg = packet.param2;
     if (!isnan(pitch_angle_deg) && !isnan(yaw_angle_deg)) {
-        set_angle_targets(0, pitch_angle_deg, yaw_angle_deg);
+        set_angle_target(0, pitch_angle_deg, yaw_angle_deg, flags & GIMBAL_MANAGER_FLAGS_YAW_LOCK);
+        return MAV_RESULT_ACCEPTED;
+    }
+
+    // param3 : pitch_rate (in deg/s)
+    // param4 : yaw rate (in deg/s)
+    const float pitch_rate_degs = packet.param3;
+    const float yaw_rate_degs = packet.param4;
+    if (!isnan(pitch_rate_degs) && !isnan(yaw_rate_degs)) {
+        set_rate_target(0, pitch_rate_degs, yaw_rate_degs, flags & GIMBAL_MANAGER_FLAGS_YAW_LOCK);
         return MAV_RESULT_ACCEPTED;
     }
 
@@ -772,7 +791,7 @@ void AP_Mount::set_target_sysid(uint8_t instance, uint8_t sysid)
 }
 
 // set_roi_target - sets target location that mount should attempt to point towards
-void AP_Mount::set_roi_target(uint8_t instance, const struct Location &target_loc)
+void AP_Mount::set_roi_target(uint8_t instance, const Location &target_loc)
 {
     // call instance's set_roi_cmd
     if (check_instance(instance)) {
